@@ -36,38 +36,22 @@ class UniswapV3Adapter(ProtocolAdapter):
         current_tick = slot0[1]
         sqrt_price_x96 = slot0[0]
         ticks: dict[int, TickLiquidity] = {}
+        # Pull all ticks in memory via on-chain call once.
         min_tick = -887272
         max_tick = 887272
-        min_compressed = math.floor(min_tick / tick_spacing)
-        max_compressed = math.ceil(max_tick / tick_spacing)
-        word_min = min_compressed // 256
-        word_max = max_compressed // 256
-
-        for word_index in range(word_min, word_max + 1):
-            bitmap = self.pool_contract.functions.tickBitmap(word_index).call()
-            if bitmap == 0:
+        for tick_index in range(min_tick, max_tick, tick_spacing):
+            liquidity_net, liquidity_gross, _, _, _, _, _, _ = self.pool_contract.functions.ticks(tick_index).call()
+            if liquidity_gross == 0:
                 continue
-            for bit_position in range(256):
-                if bitmap & (1 << bit_position) == 0:
-                    continue
-                compressed = (word_index << 8) + bit_position
-                tick_index = compressed * tick_spacing
-                if tick_index < min_tick or tick_index > max_tick:
-                    continue
-                tick_data = self.pool_contract.functions.ticks(tick_index).call()
-                liquidity_gross = tick_data[0]
-                initialized = tick_data[7]
-                if liquidity_gross == 0 or not initialized:
-                    continue
-                price_lower = self._tick_to_price(tick_index)
-                price_upper = self._tick_to_price(tick_index + tick_spacing)
-                ticks[tick_index] = TickLiquidity(
-                    lower_tick=tick_index,
-                    upper_tick=tick_index + tick_spacing,
-                    liquidity=liquidity_gross,
-                    token0_reserves=price_lower,
-                    token1_reserves=price_upper,
-                )
+            price_lower = self._tick_to_price(tick_index)
+            price_upper = self._tick_to_price(tick_index + tick_spacing)
+            ticks[tick_index] = TickLiquidity(
+                lower_tick=tick_index,
+                upper_tick=tick_index + tick_spacing,
+                liquidity=liquidity_gross,
+                token0_reserves=price_lower,
+                token1_reserves=price_upper,
+            )
         return Snapshot(
             ticks=ticks,
             price_state=PriceState(sqrt_price_x96=sqrt_price_x96, tick=current_tick),
@@ -78,35 +62,14 @@ class UniswapV3Adapter(ProtocolAdapter):
     def _event_to_delta(self, raw_log) -> LiquidityDeltaEvent:
         topics = raw_log.get("topics", [])
         data = raw_log.get("data", "0x")
-        if not topics or not data:
-            raise ValueError("Received malformed log without topics or data")
         if topics[0] == self.stream.topics[0]:
             # Mint
-            fields = [
-                "sender",
-                "owner",
-                "tickLower",
-                "tickUpper",
-                "amount",
-                "amount0",
-                "amount1",
-            ]
             decoded = decode(["address", "address", "int24", "int24", "uint128", "uint256", "uint256"], bytes.fromhex(data[2:]))
-            values = dict(zip(fields, decoded))
-            lower_tick, upper_tick, liquidity = int(values["tickLower"]), int(values["tickUpper"]), int(values["amount"])
+            lower_tick, upper_tick, liquidity = int(decoded[2]), int(decoded[3]), int(decoded[4])
             event_type = "Mint"
         else:
-            fields = [
-                "owner",
-                "tickLower",
-                "tickUpper",
-                "amount",
-                "amount0",
-                "amount1",
-            ]
             decoded = decode(["address", "int24", "int24", "uint128", "uint256", "uint256"], bytes.fromhex(data[2:]))
-            values = dict(zip(fields, decoded))
-            lower_tick, upper_tick, liquidity = int(values["tickLower"]), int(values["tickUpper"]), -int(values["amount"])
+            lower_tick, upper_tick, liquidity = int(decoded[1]), int(decoded[2]), -int(decoded[3])
             event_type = "Burn"
         return LiquidityDeltaEvent(
             tx_hash=raw_log.get("transactionHash", "0x"),
