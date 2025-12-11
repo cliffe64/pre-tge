@@ -28,7 +28,7 @@ class WebsocketLogStream:
     def stream(self) -> Iterable[dict]:
         while True:
             try:
-                with websockets.sync.client.connect(self.wss_url) as ws:
+                with websockets.sync.client.connect(self.wss_url, ping_interval=20, ping_timeout=20) as ws:
                     sub_id = self._subscribe(ws)
                     for raw in ws:
                         message = json.loads(raw)
