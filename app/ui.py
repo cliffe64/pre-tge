@@ -1,4 +1,3 @@
-import logging
 import queue
 import threading
 import time
@@ -13,7 +12,8 @@ from rich.table import Table
 from app.state_machine import LiquidityStateMachine
 from app.types import AggregatedDepth, LiquidityDeltaEvent
 
-MAX_EVENTS = 50
+def _clear_screen() -> None:
+    print("\n" * 3 + "=" * 60 + "\n")
 
 
 def _format_event(event: LiquidityDeltaEvent) -> str:

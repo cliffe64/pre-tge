@@ -60,20 +60,14 @@ DEFAULT_CONFIG = AppConfig(
         rpc_url=_get_env_or_default("RPC_URL", chain_data.get("rpc_url", "https://bsc-dataseed.binance.org")),
         wss_url=_get_env_or_default("WSS_URL", chain_data.get("wss_url", "wss://bsc-ws-node.nariox.org:443")),
         explorer=_get_env_or_default("EXPLORER_URL", chain_data.get("explorer", "https://bscscan.com/tx/")),
-        multicall_address=_get_env_or_default("MULTICALL_ADDRESS", chain_data.get("multicall_address")),
     ),
     pool=PoolConfig(
         pool_address=_get_env_or_default("POOL_ADDRESS", pool_data.get("pool_address")),
         protocol=_get_env_or_default("POOL_PROTOCOL", pool_data.get("protocol", "pancake_v3")),
         token0=_get_env_or_default("TOKEN0_SYMBOL", pool_data.get("token0", "USDT")),
         token1=_get_env_or_default("TOKEN1_SYMBOL", pool_data.get("token1", "TOKEN")),
-        fee=int(_get_env_or_default("POOL_FEE", str(pool_data.get("fee", 500))))
-        if _get_env_or_default("POOL_FEE", None) or pool_data.get("fee") is not None
-        else 500,
-        token0_decimals=int(_get_env_or_default("TOKEN0_DECIMALS", str(pool_data.get("token0_decimals", 18)))),
-        token1_decimals=int(_get_env_or_default("TOKEN1_DECIMALS", str(pool_data.get("token1_decimals", 18)))),
+        fee=int(_get_env_or_default("POOL_FEE", str(pool_data.get("fee", 500)))) if _get_env_or_default("POOL_FEE", None) or pool_data.get("fee") is not None else 500,
         pool_id=_get_env_or_default("POOL_ID", pool_data.get("pool_id")),
-        tick_lens_address=_get_env_or_default("TICK_LENS_ADDRESS", pool_data.get("tick_lens_address")),
     ),
     tokens=(
         _get_env_or_default("TOKENS", None).split(",")
