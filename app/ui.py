@@ -1,13 +1,16 @@
 import queue
 import threading
 import time
-from typing import List
+from collections import deque
+from typing import Deque
+
+from rich.console import Group
+from rich.live import Live
+from rich.panel import Panel
+from rich.table import Table
 
 from app.state_machine import LiquidityStateMachine
-from app.types import DepthRow, LiquidityDeltaEvent
-
-BAR_CHAR = "▮"
-
+from app.types import AggregatedDepth, LiquidityDeltaEvent
 
 def _clear_screen() -> None:
     print("\n" * 3 + "=" * 60 + "\n")
@@ -20,38 +23,51 @@ def _format_event(event: LiquidityDeltaEvent) -> str:
     )
 
 
-def render_depth_table(state: LiquidityStateMachine) -> None:
-    scale = state.adaptive_scale()
-    depths = state.buy_wall_depth()
-    _clear_screen()
-    print("=== Depth Chart (Buy Wall) ===")
-    print(f"Current Price: {scale.current_price:,.6f}  Step: {scale.step:,.6f}")
-    rows: List[DepthRow] = []
+def _build_depth_table(depths: list[AggregatedDepth], current_price: float, step: float) -> Table:
+    table = Table(title="Depth Chart (Buy Wall)", expand=True)
+    table.add_column("Bucket")
+    table.add_column("USDT Depth", justify="right")
+    table.add_column("Step", justify="right")
+    table.add_column("Bar")
     for depth in depths:
         bar_length = int(depth.usdt_depth // 1_000) + 1
-        bar = BAR_CHAR * min(bar_length, 60)
-        rows.append(DepthRow(price_label=depth.bucket_label, depth=depth.usdt_depth, bar=bar))
-    for row in rows:
-        print(f"{row.price_label} | USDT {row.depth:,.2f} | {row.bar}")
+        bar = "▮" * min(bar_length, 60)
+        table.add_row(depth.bucket_label, f"{depth.usdt_depth:,.2f}", f"{step:,.6f}", bar)
+    table.caption = f"Current Price: {current_price:,.6f}"
+    return table
 
 
-class StreamPrinter(threading.Thread):
-    def __init__(self, sink: queue.Queue):
+def _build_event_panel(events: Deque[str]) -> Panel:
+    return Panel("\n".join(list(events)[-MAX_EVENTS:]), title="Recent Events", border_style="blue")
+
+
+class EventRecorder(threading.Thread):
+    def __init__(self, sink: queue.Queue, buffer: Deque[str]):
         super().__init__(daemon=True)
         self.sink = sink
+        self.buffer = buffer
 
     def run(self) -> None:
         while True:
             try:
                 event = self.sink.get()
-                print(_format_event(event))
+                formatted = _format_event(event)
+                logging.info(formatted)
+                self.buffer.append(formatted)
             except Exception:
                 continue
 
 
 def start_ui(state: LiquidityStateMachine, event_queue: queue.Queue) -> None:
-    printer = StreamPrinter(event_queue)
-    printer.start()
-    while True:
-        render_depth_table(state)
-        time.sleep(15)
+    event_buffer: Deque[str] = deque(maxlen=MAX_EVENTS)
+    recorder = EventRecorder(event_queue, event_buffer)
+    recorder.start()
+
+    with Live(refresh_per_second=2, screen=False) as live:
+        while True:
+            scale = state.adaptive_scale()
+            depths = state.buy_wall_depth()
+            depth_table = _build_depth_table(depths, scale.current_price, scale.step)
+            events_panel = _build_event_panel(event_buffer)
+            live.update(Group(depth_table, events_panel))
+            time.sleep(1)

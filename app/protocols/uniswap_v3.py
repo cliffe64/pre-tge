@@ -1,18 +1,28 @@
-import math
 import time
-from typing import Iterable, List
+from typing import Iterable, List, Sequence
 from eth_abi import decode
 from eth_utils import keccak
 from web3 import Web3
-from web3.contract.contract import ContractEvent
+from web3.contract.contract import ContractEvent, ContractFunction
 
+from app.multicall import MulticallClient
+from app.pricing import tick_to_price
 from app.types import LiquidityDeltaEvent, PriceState, Snapshot, TickLiquidity
 from app.protocols.base import ProtocolAdapter
 from app.wss import WebsocketLogStream
 
 
 class UniswapV3Adapter(ProtocolAdapter):
-    def __init__(self, web3: Web3, pool_address: str, abi: List[dict], wss_url: str):
+    def __init__(
+        self,
+        web3: Web3,
+        pool_address: str,
+        abi: List[dict],
+        wss_url: str,
+        multicall: MulticallClient,
+        token0_decimals: int,
+        token1_decimals: int,
+    ):
         super().__init__(web3, pool_address)
         self.pool_contract = web3.eth.contract(address=self.pool_address, abi=abi)
         self._mint_event: ContractEvent = self.pool_contract.events.Mint
@@ -26,15 +36,19 @@ class UniswapV3Adapter(ProtocolAdapter):
                 keccak(text="Burn(address,int24,int24,uint128,uint256,uint256)").hex(),
             ],
         )
-
-    def _tick_to_price(self, tick: int) -> float:
-        return math.pow(1.0001, tick)
+        self.multicall = multicall
+        self.token0_decimals = token0_decimals
+        self.token1_decimals = token1_decimals
 
     def fetch_snapshot(self) -> Snapshot:
-        slot0 = self.pool_contract.functions.slot0().call()
-        tick_spacing = self.pool_contract.functions.tickSpacing().call()
-        current_tick = slot0[1]
-        sqrt_price_x96 = slot0[0]
+        slot0_fn = self.pool_contract.functions.slot0()
+        tick_spacing_fn = self.pool_contract.functions.tickSpacing()
+        slot0_result, tick_spacing_result = self.multicall.call_functions(
+            [slot0_fn, tick_spacing_fn]
+        )
+        tick_spacing = tick_spacing_result[0]
+        current_tick = slot0_result[1]
+        sqrt_price_x96 = slot0_result[0]
         ticks: dict[int, TickLiquidity] = {}
         min_tick = -887272
         max_tick = 887272
@@ -42,8 +56,10 @@ class UniswapV3Adapter(ProtocolAdapter):
             liquidity_gross, liquidity_net, *_ = self.pool_contract.functions.ticks(tick_index).call()
             if liquidity_gross == 0:
                 continue
-            price_lower = self._tick_to_price(tick_index)
-            price_upper = self._tick_to_price(tick_index + tick_spacing)
+            price_lower = tick_to_price(tick_index, self.token0_decimals, self.token1_decimals)
+            price_upper = tick_to_price(
+                tick_index + tick_spacing, self.token0_decimals, self.token1_decimals
+            )
             ticks[tick_index] = TickLiquidity(
                 lower_tick=tick_index,
                 upper_tick=tick_index + tick_spacing,

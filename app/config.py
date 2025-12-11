@@ -11,6 +11,7 @@ class ChainConfig:
     rpc_url: str
     wss_url: str
     explorer: str
+    multicall_address: str | None = None
 
 
 @dataclass
@@ -20,7 +21,10 @@ class PoolConfig:
     token0: str
     token1: str
     fee: int
+    token0_decimals: int
+    token1_decimals: int
     pool_id: str | None = None  # for Uniswap V4
+    tick_lens_address: str | None = None
 
 
 @dataclass

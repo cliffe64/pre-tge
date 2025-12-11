@@ -1,17 +1,28 @@
-import math
 import time
-from typing import Iterable, List
+from typing import Iterable, List, Sequence
 from eth_abi import decode
 from eth_utils import keccak
 from web3 import Web3
 
+from app.multicall import MulticallClient
+from app.pricing import tick_to_price
 from app.protocols.base import ProtocolAdapter
 from app.types import LiquidityDeltaEvent, PriceState, Snapshot, TickLiquidity
 from app.wss import WebsocketLogStream
 
 
 class UniswapV4Adapter(ProtocolAdapter):
-    def __init__(self, web3: Web3, pool_manager_address: str, pool_id: str, abi: List[dict], wss_url: str):
+    def __init__(
+        self,
+        web3: Web3,
+        pool_manager_address: str,
+        pool_id: str,
+        abi: List[dict],
+        wss_url: str,
+        multicall: MulticallClient,
+        token0_decimals: int,
+        token1_decimals: int,
+    ):
         super().__init__(web3, pool_manager_address)
         self.pool_id = pool_id
         self.pool_manager = web3.eth.contract(address=self.pool_address, abi=abi)
@@ -23,31 +34,47 @@ class UniswapV4Adapter(ProtocolAdapter):
                 keccak(text="Mint(address,bytes32,int24,int24,int128)").hex(),
             ],
         )
-
-    def _tick_to_price(self, tick: int) -> float:
-        return math.pow(1.0001, tick)
+        self.multicall = multicall
+        self.token0_decimals = token0_decimals
+        self.token1_decimals = token1_decimals
 
     def fetch_snapshot(self) -> Snapshot:
         # PoolManager exposes concentrated liquidity via poolId.
         ticks: dict[int, TickLiquidity] = {}
-        tick_spacing = self.pool_manager.functions.tickSpacing(self.pool_id).call()
-        current_tick = self.pool_manager.functions.getCurrentTick(self.pool_id).call()
-        sqrt_price_x96 = self.pool_manager.functions.getCurrentSqrtPrice(self.pool_id).call()
+        fn_tick_spacing = self.pool_manager.functions.tickSpacing(self.pool_id)
+        fn_current_tick = self.pool_manager.functions.getCurrentTick(self.pool_id)
+        fn_sqrt_price = self.pool_manager.functions.getCurrentSqrtPrice(self.pool_id)
+        tick_spacing_result, current_tick_result, sqrt_price_result = self.multicall.call_functions(
+            [fn_tick_spacing, fn_current_tick, fn_sqrt_price]
+        )
+        tick_spacing = tick_spacing_result[0]
+        current_tick = current_tick_result[0]
+        sqrt_price_x96 = sqrt_price_result[0]
         min_tick = -887272
         max_tick = 887272
-        for tick_index in range(min_tick, max_tick, tick_spacing):
-            liquidity = self.pool_manager.functions.getTickLiquidity(self.pool_id, tick_index).call()
-            if liquidity == 0:
-                continue
-            price_lower = self._tick_to_price(tick_index)
-            price_upper = self._tick_to_price(tick_index + tick_spacing)
-            ticks[tick_index] = TickLiquidity(
-                lower_tick=tick_index,
-                upper_tick=tick_index + tick_spacing,
-                liquidity=liquidity,
-                token0_reserves=price_lower,
-                token1_reserves=price_upper,
-            )
+        tick_indices = list(range(min_tick, max_tick, tick_spacing))
+        tick_functions = [
+            self.pool_manager.functions.getTickLiquidity(self.pool_id, tick_index)
+            for tick_index in tick_indices
+        ]
+        for batch, tick_batch in zip(self._batched_functions(tick_functions), self._batched_ticks(tick_indices)):
+            liquidity_results = self.multicall.call_functions(batch)
+            for tick_index, (liquidity,) in zip(tick_batch, liquidity_results):
+                if liquidity == 0:
+                    continue
+                price_lower = tick_to_price(
+                    tick_index, self.token0_decimals, self.token1_decimals
+                )
+                price_upper = tick_to_price(
+                    tick_index + tick_spacing, self.token0_decimals, self.token1_decimals
+                )
+                ticks[tick_index] = TickLiquidity(
+                    lower_tick=tick_index,
+                    upper_tick=tick_index + tick_spacing,
+                    liquidity=liquidity,
+                    token0_reserves=price_lower,
+                    token1_reserves=price_upper,
+                )
         return Snapshot(
             ticks=ticks,
             price_state=PriceState(sqrt_price_x96=sqrt_price_x96, tick=current_tick),
@@ -87,3 +114,13 @@ class UniswapV4Adapter(ProtocolAdapter):
             event = self._event_to_delta(raw)
             if event:
                 yield event
+
+    def _batched_functions(
+        self, functions: Sequence, batch_size: int = 120
+    ) -> Iterable[Sequence]:
+        for i in range(0, len(functions), batch_size):
+            yield functions[i : i + batch_size]
+
+    def _batched_ticks(self, ticks: Sequence[int], batch_size: int = 120) -> Iterable[Sequence[int]]:
+        for i in range(0, len(ticks), batch_size):
+            yield ticks[i : i + batch_size]
