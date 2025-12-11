@@ -6,6 +6,7 @@ from pathlib import Path
 
 from web3 import Web3
 
+from app.abi_loader import load_all_abis
 from app.config import DEFAULT_CONFIG
 from app.multicall import MulticallClient
 from app.state_machine import LiquidityStateMachine
@@ -233,6 +234,7 @@ def start_event_loop(state: LiquidityStateMachine, sink: queue.Queue) -> None:
         for event in state.adapter.stream_events():
             state.apply_event(event)
             sink.put(event)
+
     thread = threading.Thread(target=_loop, daemon=True)
     thread.start()
 
