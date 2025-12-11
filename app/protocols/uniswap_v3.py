@@ -110,21 +110,40 @@ class UniswapV3Adapter(ProtocolAdapter):
                 continue
 
     def _collect_initialized_ticks(self, min_tick: int, max_tick: int, tick_spacing: int) -> Iterable[int]:
+        """
+        [Refactored] Use Multicall to batch fetch tick bitmaps.
+        """
         word_size = 256
         min_word = math.floor(min_tick / tick_spacing / word_size)
         max_word = math.ceil(max_tick / tick_spacing / word_size)
-        for word_index in range(min_word, max_word + 1):
-            bitmap = self.pool_contract.functions.tickBitmap(word_index).call()
-            if bitmap == 0:
+        
+        word_indices = list(range(min_word, max_word + 1))
+        
+        # 将请求分批，每批查询 200 个 Bitmap Word (约 500ms)
+        batch_size = 200
+        for i in range(0, len(word_indices), batch_size):
+            chunk = word_indices[i : i + batch_size]
+            
+            # 1. 构造 Multicall 请求
+            calls = [self.pool_contract.functions.tickBitmap(w) for w in chunk]
+            
+            try:
+                # 2. 批量执行
+                bitmaps = self.multicall.call_functions(calls)
+            except Exception as e:
+                print(f"Bitmap batch fetch failed: {e}")
                 continue
-            for bit_pos in range(word_size):
-                if (bitmap >> bit_pos) & 1 == 0:
+            
+            # 3. 本地解析
+            for word_index, (bitmap,) in zip(chunk, bitmaps):
+                if bitmap == 0:
                     continue
-                normalized_tick = (word_index * word_size) + bit_pos
-                tick_index = normalized_tick * tick_spacing
-                if tick_index < min_tick or tick_index > max_tick:
-                    continue
-                yield tick_index
+                for bit_pos in range(word_size):
+                    if (bitmap >> bit_pos) & 1:
+                        normalized_tick = (word_index * word_size) + bit_pos
+                        tick_index = normalized_tick * tick_spacing
+                        if min_tick <= tick_index <= max_tick:
+                            yield tick_index
 
     def _decode_mint_event(self, data: str) -> dict | None:
         field_names = ["sender", "owner", "tickLower", "tickUpper", "amount", "amount0", "amount1"]
