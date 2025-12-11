@@ -13,7 +13,19 @@ from app.state_machine import LiquidityStateMachine
 from app.ui import start_ui
 def load_config():
     return DEFAULT_CONFIG
-
+    
+def setup_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler("monitor.log"),
+            logging.StreamHandler()
+        ]
+    )
+    # 屏蔽 websockets 和 urllib3 的啰嗦日志
+    logging.getLogger("websockets").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 def _load_abi(name: str) -> list[dict]:
     path = Path(__file__).with_name("abis") / f"{name}.json"
