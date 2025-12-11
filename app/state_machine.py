@@ -9,6 +9,7 @@ from app.config import AppConfig
 from app.protocols.pancake_v3 import PancakeV3Adapter
 from app.protocols.uniswap_v3 import UniswapV3Adapter
 from app.protocols.uniswap_v4 import UniswapV4Adapter
+from app.pricing import tick_to_price
 from app.types import AdaptiveScale, AggregatedDepth, LiquidityDeltaEvent, PriceState, Snapshot, TickLiquidity
 
 
@@ -17,13 +18,23 @@ class LiquidityStateMachine:
         self.web3 = web3
         self.config = config
         self.lock = threading.Lock()
+        self.token0_decimals = config.pool.token0_decimals
+        self.token1_decimals = config.pool.token1_decimals
         self.adapter = self._build_adapter(abis)
         self.snapshot = self.adapter.fetch_snapshot()
 
     def _build_adapter(self, abis: dict):
         protocol = self.config.pool.protocol
         if protocol == "uniswap_v3":
-            return UniswapV3Adapter(self.web3, self.config.pool.pool_address, abis["uniswap_v3_pool"], self.config.chain.wss_url)
+            return UniswapV3Adapter(
+                self.web3,
+                self.config.pool.pool_address,
+                abis["uniswap_v3_pool"],
+                self.config.chain.wss_url,
+                abis["multicall"],
+                self.token0_decimals,
+                self.token1_decimals,
+            )
         if protocol == "uniswap_v4":
             return UniswapV4Adapter(
                 self.web3,
@@ -31,6 +42,9 @@ class LiquidityStateMachine:
                 self.config.pool.pool_id or "0x",
                 abis["uniswap_v4_pool_manager"],
                 self.config.chain.wss_url,
+                abis["multicall"],
+                self.token0_decimals,
+                self.token1_decimals,
             )
         return PancakeV3Adapter(
             self.web3,
@@ -39,14 +53,17 @@ class LiquidityStateMachine:
             abis["pancake_tick_lens_address"],
             abis["pancake_pool"],
             self.config.chain.wss_url,
+            abis["multicall"],
+            self.token0_decimals,
+            self.token1_decimals,
         )
 
     def apply_event(self, event: LiquidityDeltaEvent) -> None:
         with self.lock:
             bucket = self.snapshot.ticks.get(event.lower_tick)
             if bucket is None:
-                price_lower = math.pow(1.0001, event.lower_tick)
-                price_upper = math.pow(1.0001, event.upper_tick)
+                price_lower = tick_to_price(event.lower_tick, self.token0_decimals, self.token1_decimals)
+                price_upper = tick_to_price(event.upper_tick, self.token0_decimals, self.token1_decimals)
                 bucket = TickLiquidity(
                     lower_tick=event.lower_tick,
                     upper_tick=event.upper_tick,
@@ -62,7 +79,7 @@ class LiquidityStateMachine:
             self.snapshot.price_state = price_state
 
     def _tick_price(self, tick: int) -> float:
-        return math.pow(1.0001, tick)
+        return tick_to_price(tick, self.token0_decimals, self.token1_decimals)
 
     def _current_price(self) -> float:
         tick = self.snapshot.price_state.tick
