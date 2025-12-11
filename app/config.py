@@ -45,58 +45,29 @@ def _get_env_or_default(key: str, fallback: Optional[str]) -> Optional[str]:
     return os.getenv(key, fallback)
 
 
-def _get_int_env(key: str, fallback: Optional[int], default: int) -> int:
-    raw_value = os.getenv(key)
-    if raw_value is not None:
-        try:
-            return int(raw_value)
-        except ValueError:
-            pass
-    if fallback is not None:
-        try:
-            return int(fallback)
-        except (TypeError, ValueError):
-            pass
-    return default
-
-
 _CONFIG_PATH = Path(__file__).with_name("config.json")
 _CONFIG_DATA = _load_config_from_file(_CONFIG_PATH)
+
 
 chain_data = _CONFIG_DATA.get("chain", {})
 pool_data = _CONFIG_DATA.get("pool", {})
 tokens_data = _CONFIG_DATA.get("tokens", [])
 
+
 DEFAULT_CONFIG = AppConfig(
     chain=ChainConfig(
         name=_get_env_or_default("CHAIN_NAME", chain_data.get("name", "bsc")),
-        rpc_url=_get_env_or_default(
-            "RPC_URL", chain_data.get("rpc_url", "https://bsc-dataseed.binance.org")
-        ),
-        wss_url=_get_env_or_default(
-            "WSS_URL", chain_data.get("wss_url", "wss://bsc-ws-node.nariox.org:443")
-        ),
-        explorer=_get_env_or_default(
-            "EXPLORER_URL", chain_data.get("explorer", "https://bscscan.com/tx/")
-        ),
-        multicall_address=_get_env_or_default(
-            "MULTICALL_ADDRESS", chain_data.get("multicall_address")
-        ),
+        rpc_url=_get_env_or_default("RPC_URL", chain_data.get("rpc_url", "https://bsc-dataseed.binance.org")),
+        wss_url=_get_env_or_default("WSS_URL", chain_data.get("wss_url", "wss://bsc-ws-node.nariox.org:443")),
+        explorer=_get_env_or_default("EXPLORER_URL", chain_data.get("explorer", "https://bscscan.com/tx/")),
     ),
     pool=PoolConfig(
-        pool_address=_get_env_or_default(
-            "POOL_ADDRESS", pool_data.get("pool_address")
-        ),
+        pool_address=_get_env_or_default("POOL_ADDRESS", pool_data.get("pool_address")),
         protocol=_get_env_or_default("POOL_PROTOCOL", pool_data.get("protocol", "pancake_v3")),
         token0=_get_env_or_default("TOKEN0_SYMBOL", pool_data.get("token0", "USDT")),
         token1=_get_env_or_default("TOKEN1_SYMBOL", pool_data.get("token1", "TOKEN")),
-        fee=_get_int_env("POOL_FEE", pool_data.get("fee"), 500),
-        token0_decimals=_get_int_env("TOKEN0_DECIMALS", pool_data.get("token0_decimals"), 18),
-        token1_decimals=_get_int_env("TOKEN1_DECIMALS", pool_data.get("token1_decimals"), 18),
+        fee=int(_get_env_or_default("POOL_FEE", str(pool_data.get("fee", 500)))) if _get_env_or_default("POOL_FEE", None) or pool_data.get("fee") is not None else 500,
         pool_id=_get_env_or_default("POOL_ID", pool_data.get("pool_id")),
-        tick_lens_address=_get_env_or_default(
-            "TICK_LENS_ADDRESS", pool_data.get("tick_lens_address")
-        ),
     ),
     tokens=(
         _get_env_or_default("TOKENS", None).split(",")
@@ -106,6 +77,7 @@ DEFAULT_CONFIG = AppConfig(
         else ["USDT", "TOKEN"]
     ),
 )
+
 
 if not DEFAULT_CONFIG.pool.pool_address:
     raise ValueError("POOL_ADDRESS must be provided via environment variables or config.json")

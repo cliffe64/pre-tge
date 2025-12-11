@@ -52,15 +52,8 @@ class UniswapV3Adapter(ProtocolAdapter):
         ticks: dict[int, TickLiquidity] = {}
         min_tick = -887272
         max_tick = 887272
-        initialized_ticks = list(
-            self._collect_initialized_ticks(min_tick, max_tick, tick_spacing)
-        )
-        tick_batches = self._batched_functions(
-            [self.pool_contract.functions.ticks(tick_index) for tick_index in initialized_ticks]
-        )
-        decoded_ticks = self.multicall.batched_call(tick_batches)
-        for tick_index, tick_data in zip(initialized_ticks, decoded_ticks):
-            liquidity_gross, liquidity_net, *_ = tick_data
+        for tick_index in self._collect_initialized_ticks(min_tick, max_tick, tick_spacing):
+            liquidity_gross, liquidity_net, *_ = self.pool_contract.functions.ticks(tick_index).call()
             if liquidity_gross == 0:
                 continue
             price_lower = tick_to_price(tick_index, self.token0_decimals, self.token1_decimals)
@@ -118,38 +111,20 @@ class UniswapV3Adapter(ProtocolAdapter):
 
     def _collect_initialized_ticks(self, min_tick: int, max_tick: int, tick_spacing: int) -> Iterable[int]:
         word_size = 256
-        min_word = int(min_tick / tick_spacing / word_size)
-        max_word = int(max_tick / tick_spacing / word_size)
-        chunk_size = 200
-
-        for chunk_start in range(min_word, max_word + 1, chunk_size):
-            chunk_indices = list(
-                range(chunk_start, min(chunk_start + chunk_size, max_word + 1))
-            )
-            word_functions: List[ContractFunction] = [
-                self.pool_contract.functions.tickBitmap(word_index)
-                for word_index in chunk_indices
-            ]
-            word_batches = self._batched_functions(word_functions)
-            bitmaps = self.multicall.batched_call(word_batches)
-
-            for word_index, (bitmap,) in zip(chunk_indices, bitmaps):
-                if bitmap == 0:
+        min_word = math.floor(min_tick / tick_spacing / word_size)
+        max_word = math.ceil(max_tick / tick_spacing / word_size)
+        for word_index in range(min_word, max_word + 1):
+            bitmap = self.pool_contract.functions.tickBitmap(word_index).call()
+            if bitmap == 0:
+                continue
+            for bit_pos in range(word_size):
+                if (bitmap >> bit_pos) & 1 == 0:
                     continue
-                for bit_pos in range(word_size):
-                    if (bitmap >> bit_pos) & 1 == 0:
-                        continue
-                    normalized_tick = (word_index * word_size) + bit_pos
-                    tick_index = normalized_tick * tick_spacing
-                    if tick_index < min_tick or tick_index > max_tick:
-                        continue
-                    yield tick_index
-
-    def _batched_functions(
-        self, functions: Sequence[ContractFunction], batch_size: int = 120
-    ) -> Iterable[Sequence[ContractFunction]]:
-        for i in range(0, len(functions), batch_size):
-            yield functions[i : i + batch_size]
+                normalized_tick = (word_index * word_size) + bit_pos
+                tick_index = normalized_tick * tick_spacing
+                if tick_index < min_tick or tick_index > max_tick:
+                    continue
+                yield tick_index
 
     def _decode_mint_event(self, data: str) -> dict | None:
         field_names = ["sender", "owner", "tickLower", "tickUpper", "amount", "amount0", "amount1"]
