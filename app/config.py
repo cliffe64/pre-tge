@@ -56,6 +56,7 @@ tokens_data = _CONFIG_DATA.get("tokens", [])
 
 DEFAULT_CONFIG = AppConfig(
     chain=ChainConfig(
+        multicall_address=_get_env_or_default("MULTICALL_ADDRESS", "0xcA11bde05977b3631167028862bE2a173976CA11"), # Multicall3),
         name=_get_env_or_default("CHAIN_NAME", chain_data.get("name", "bsc")),
         rpc_url=_get_env_or_default("RPC_URL", chain_data.get("rpc_url", "https://bsc-dataseed.binance.org")),
         wss_url=_get_env_or_default("WSS_URL", chain_data.get("wss_url", "wss://bsc-ws-node.nariox.org:443")),
