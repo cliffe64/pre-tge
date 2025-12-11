@@ -7,6 +7,7 @@ class TickLiquidity:
     lower_tick: int
     upper_tick: int
     liquidity: int
+    liquidity_net: int | None = None
     token0_reserves: float
     token1_reserves: float
 

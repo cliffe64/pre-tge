@@ -1,4 +1,3 @@
-import os
 import queue
 import threading
 import time
@@ -11,7 +10,7 @@ BAR_CHAR = "▮"
 
 
 def _clear_screen() -> None:
-    os.system("clear")
+    print("\n" * 3 + "=" * 60 + "\n")
 
 
 def _format_event(event: LiquidityDeltaEvent) -> str:
